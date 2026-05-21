@@ -107,8 +107,11 @@ def download_and_preprocess_data():
     df.drop(columns=['No', 'year', 'month', 'day', 'hour', 'station'], inplace=True, errors='ignore')
     
     # 2. Handle missing values via robust interpolation + ffill + bfill
+    # Interpolate numeric columns only (string/categorical columns require ffill/bfill).
     print("[DATA] Performing linear interpolation and temporal filling on missing values...")
-    df = df.interpolate(method='linear').ffill().bfill()
+    num_cols = df.select_dtypes(include="number").columns
+    df[num_cols] = df[num_cols].interpolate(method="linear").ffill().bfill()
+    df = df.ffill().bfill()
     
     # 3. Categorical encoding for Wind Direction (wd)
     df = pd.get_dummies(df, columns=['wd'], drop_first=True)
