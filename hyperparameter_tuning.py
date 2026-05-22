@@ -18,8 +18,10 @@ import os
 import warnings
 
 import matplotlib
-matplotlib.use("Agg")  # ekransız ortamda PNG kaydetmek için
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+from visualization import SAVE_KWARGS, apply_publication_style
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -50,7 +52,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ─── Veriyi bir kez yükle (her trial'da tekrar yüklememek için) ───────────────
 print("[HPO] Veri yükleniyor...")
 set_global_seeds(RANDOM_SEED)
-train_scaled, val_scaled, test_scaled, scaler, feature_names = (
+train_scaled, val_scaled, test_scaled, scaler, feature_names, _ = (
     download_and_preprocess_data()
 )
 X_train, y_train = create_sliding_windows(train_scaled, window_size=WINDOW_SIZE)
@@ -130,25 +132,27 @@ def objective(trial: optuna.Trial) -> float:
 
 # ─── Grafik 1: Optimization History ──────────────────────────────────────────
 def _plot_optimization_history(study: optuna.Study) -> None:
+    apply_publication_style()
     values    = [t.value for t in study.trials if t.value is not None]
     best_vals = [min(values[: i + 1]) for i in range(len(values))]
     trial_nums = list(range(len(values)))
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.scatter(trial_nums, values, color="#bc5090", s=50, zorder=3, label="Trial val_loss")
-    ax.plot(trial_nums, best_vals, color="#003f5c", linewidth=2.5, label="En iyi val_loss")
-    ax.set_title("Optuna: Optimizasyon Geçmişi (Validation Loss)", fontsize=15, pad=12)
-    ax.set_xlabel("Trial Numarası", fontsize=12)
-    ax.set_ylabel("Validation Loss (MSE)", fontsize=12)
+    ax.scatter(trial_nums, values, color="#bc5090", s=50, zorder=3, label="Trial val_loss", alpha=0.85)
+    ax.plot(trial_nums, best_vals, color="#003f5c", linewidth=2.5, label="Best val_loss so far")
+    ax.set_title("Optuna: Optimization History (Validation Loss)", pad=14)
+    ax.set_xlabel("Trial index")
+    ax.set_ylabel("Validation loss (MSE)")
     ax.legend(frameon=True)
-    plt.tight_layout()
-    fig.savefig("outputs/optimization_history.png", dpi=300)
+    fig.tight_layout()
+    fig.savefig("outputs/optimization_history.png", **SAVE_KWARGS)
     plt.close(fig)
     print("[HPO] Kaydedildi: outputs/optimization_history.png")
 
 
 # ─── Grafik 2: Parameter Importances ─────────────────────────────────────────
 def _plot_param_importances(study: optuna.Study) -> None:
+    apply_publication_style()
     """
     Fanova tabanlı parametre önem skorlarını hesaplar ve çubuk grafik olarak kaydeder.
     Yeterli trial yoksa (< 4) basit bir hata mesajı yazdırır ve atlar.
@@ -181,11 +185,11 @@ def _plot_param_importances(study: optuna.Study) -> None:
             va="center",
             fontsize=11,
         )
-    ax.set_title("Optuna: Hiperparametre Önemi (Fanova)", fontsize=15, pad=12)
-    ax.set_xlabel("Önem Skoru", fontsize=12)
+    ax.set_title("Optuna: Hyperparameter Importance (Fanova)", pad=14)
+    ax.set_xlabel("Importance score")
     ax.set_xlim(0, max(scores) * 1.25)
-    plt.tight_layout()
-    fig.savefig("outputs/param_importances.png", dpi=300)
+    fig.tight_layout()
+    fig.savefig("outputs/param_importances.png", **SAVE_KWARGS)
     plt.close(fig)
     print("[HPO] Kaydedildi: outputs/param_importances.png")
 

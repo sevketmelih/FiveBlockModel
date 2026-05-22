@@ -29,7 +29,6 @@ import urllib.request
 import zipfile
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
@@ -56,18 +55,7 @@ NOISE_SWEEP_LEVELS = (0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20)
 # Ensure outputs folder exists
 os.makedirs("outputs", exist_ok=True)
 
-# Set plotting styling for publication-grade charts
-plt.style.use('seaborn-v0_8-whitegrid')
-plt.rcParams.update({
-    'font.size': 12,
-    'axes.labelsize': 14,
-    'axes.titlesize': 16,
-    'xtick.labelsize': 12,
-    'ytick.labelsize': 12,
-    'figure.titlesize': 18,
-    'figure.dpi': 300
-})
-PALETTE = ["#003f5c", "#bc5090", "#ffa600", "#ff6361", "#58508d"]
+from visualization import generate_all_publication_figures
 
 # ==========================================
 # SECTION 1: DATA ACQUISITION & PREPROCESSING
@@ -140,7 +128,13 @@ def download_and_preprocess_data():
     val_scaled = scaler.transform(val_data)
     test_scaled = scaler.transform(test_data)
     
-    return train_scaled, val_scaled, test_scaled, scaler, feature_names
+    test_index = df.index[val_end:]
+    test_target_hours = np.array(
+        [test_index[i + 24].hour for i in range(len(test_scaled) - 24)],
+        dtype=np.int32,
+    )
+
+    return train_scaled, val_scaled, test_scaled, scaler, feature_names, test_target_hours
 
 def create_sliding_windows(data, window_size=24, target_col_idx=0):
     """
@@ -524,7 +518,9 @@ def write_dae_robustness_report(metrics_clean, metrics_noisy, sweep_df):
 def run_ablation_studies():
     set_global_seeds(RANDOM_SEED)
 
-    train_scaled, val_scaled, test_scaled, scaler, feature_names = download_and_preprocess_data()
+    train_scaled, val_scaled, test_scaled, scaler, feature_names, test_target_hours = (
+        download_and_preprocess_data()
+    )
     
     X_train, y_train = create_sliding_windows(train_scaled, window_size=24)
     X_val, y_val = create_sliding_windows(val_scaled, window_size=24)
@@ -652,75 +648,30 @@ def run_ablation_studies():
     print("=" * 60)
     print(f"[REPORT] DAE noise study: outputs/dae_noise_robustness_report.md")
     
-    # ==========================================
-    # SECTION 5: PUBLICATION-GRADE VISUALIZATIONS
-    # ==========================================
-    
-    # Plot 1: Combined Loss Curves
-    plt.figure(figsize=(10, 6))
-    for i, (name, hist) in enumerate(histories.items()):
-        val_loss_key = 'val_loss' if 'val_loss' in hist else 'val_forecast_output_loss'
-        plt.plot(hist[val_loss_key], label=f"{name} (Val)", color=PALETTE[i], linewidth=2.5)
-    plt.title("Ablation Study: Validation Loss Curves Across Scenarios", pad=15)
-    plt.xlabel("Epochs")
-    plt.ylabel("Validation Loss (MSE)")
-    plt.legend(loc="upper right", frameon=True)
-    plt.tight_layout()
-    plt.savefig("outputs/ablation_loss_curves.png")
-    plt.close()
-    
-    # Plot 2: Prediction Comparison (Sub-segment of Test Set, clean)
-    plt.figure(figsize=(12, 6))
-    plt.plot(y_true_clean[200:272], label="Ground Truth (Real)", color="#000000", linewidth=2.5, linestyle='--')
-    for i, (name, y_pred) in enumerate(test_predictions_clean.items()):
-        plt.plot(y_pred[200:272], label=name.split(" (")[0], color=PALETTE[i], linewidth=2)
-    plt.title("Real vs. Forecasted PM2.5 Concentration (72-Hour Test Interval)", pad=15)
-    plt.xlabel("Hours")
-    plt.ylabel("PM2.5 Level (ug/m^3)")
-    plt.legend(loc="upper right", frameon=True)
-    plt.tight_layout()
-    plt.savefig("outputs/prediction_scatter_plot.png")
-    plt.close()
-    
-    # Plot 3: Attention Weights Heatmap (Model A) using pure Matplotlib
-    if model_a_attention_weights is not None:
-        plt.figure(figsize=(10, 6))
-        im = plt.imshow(model_a_attention_weights[:50, :], cmap="magma", aspect="auto")
-        plt.colorbar(im, label='Attention Weight')
-        plt.title("Attention Weights Across Time Steps (Model A - First 50 Samples)", pad=15)
-        plt.xlabel("Conv-Pooled Time Steps (Compressed Sequence Length)")
-        plt.ylabel("Test Sample Index")
-        plt.grid(False)
-        plt.tight_layout()
-        plt.savefig("outputs/attention_weights_map.png")
-        plt.close()
+    # Task 4 — publication-grade figures (300 DPI) and Markdown tables
+    key_a = next(k for k in test_predictions_clean if k.startswith("Model A"))
+    key_b = next(k for k in test_predictions_clean if k.startswith("Model B"))
+    _, _, y_pred_a_noisy = evaluate_forecast(
+        trained_models[key_a][1], X_test_noisy, y_test, test_scaled, scaler, True
+    )
+    _, _, y_pred_b_noisy = evaluate_forecast(
+        trained_models[key_b][1], X_test_noisy, y_test, test_scaled, scaler, False
+    )
 
-    # Plot 4: Clean vs noisy PM2.5 forecast — Model A vs Model B
-    if test_predictions_clean:
-        key_a = [k for k in test_predictions_clean if k.startswith("Model A")][0]
-        key_b = [k for k in test_predictions_clean if k.startswith("Model B")][0]
-        _, _, y_pred_a_noisy = evaluate_forecast(
-            trained_models[key_a][1], X_test_noisy, y_test, test_scaled, scaler, True
-        )
-        _, _, y_pred_b_noisy = evaluate_forecast(
-            trained_models[key_b][1], X_test_noisy, y_test, test_scaled, scaler, False
-        )
-        plt.figure(figsize=(12, 6))
-        sl = slice(200, 272)
-        plt.plot(y_true_clean[sl], "k--", linewidth=2.5, label="Ground Truth")
-        plt.plot(test_predictions_clean[key_a][sl], label="Model A (Clean inputs)", color=PALETTE[0])
-        plt.plot(y_pred_a_noisy[sl], label="Model A (Noisy inputs)", color=PALETTE[0], linestyle=":")
-        plt.plot(test_predictions_clean[key_b][sl], label="Model B (Clean inputs)", color=PALETTE[1])
-        plt.plot(y_pred_b_noisy[sl], label="Model B (Noisy inputs)", color=PALETTE[1], linestyle=":")
-        plt.title("DAE Robustness: PM2.5 Forecast Under Sensor Noise (72h Test Window)", pad=15)
-        plt.xlabel("Hours")
-        plt.ylabel("PM2.5 (ug/m^3)")
-        plt.legend(loc="upper right")
-        plt.tight_layout()
-        plt.savefig("outputs/dae_clean_vs_noisy_forecast.png")
-        plt.close()
-
-    print("[VISUALIZATION] Generated plots in outputs/ directory.")
+    generate_all_publication_figures(
+        histories=histories,
+        y_true_clean=y_true_clean,
+        test_predictions_clean=test_predictions_clean,
+        metrics_clean=metrics_clean,
+        metrics_noisy=metrics_noisy,
+        attention_weights=model_a_attention_weights,
+        target_hours=test_target_hours,
+        sweep_df=sweep_df,
+        y_pred_a_clean=test_predictions_clean[key_a],
+        y_pred_a_noisy=y_pred_a_noisy,
+        y_pred_b_clean=test_predictions_clean[key_b],
+        y_pred_b_noisy=y_pred_b_noisy,
+    )
 
 if __name__ == "__main__":
     run_ablation_studies()
