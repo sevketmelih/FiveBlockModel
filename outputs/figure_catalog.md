@@ -22,10 +22,10 @@ All raster figures export at **300 DPI** (`PUBLICATION_DPI` in `visualization.py
 
 | Model | R² Clean | R² Noisy |
 | :--- | :---: | :---: |
-| **A (Full)** | 0.8690 | 0.8388 |
-| **B (No DAE)** | 0.8631 | 0.8046 |
-| **C (No Attn)** | 0.8499 | 0.8432 |
-| **D (Base)** | 0.8719 | 0.7193 |
+| **A (Full)** | 0.9159 | 0.9170 |
+| **B (No DAE)** | 0.9159 | 0.8692 |
+| **C (No Attn)** | 0.9072 | 0.9062 |
+| **D (Base)** | 0.9191 | 0.8627 |
 
 ## Reproduction
 

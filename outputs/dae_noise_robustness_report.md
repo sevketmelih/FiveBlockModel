@@ -6,14 +6,15 @@ Models are trained on **clean** windows. Models **with DAE** (A, C) additionally
 - Test noise std (auxiliary channels only): `0.12`
 - Training DAE noise std: `0.04`
 - Reconstruction loss weight (beta): `0.05`
+- Training hyperparameters: see `outputs/best_hyperparameters.json` or module defaults
 - Random seed: `42`
 
 ## R² Summary
 
 | Condition | Model A (DAE) | Model B (No DAE) | Model D (Base) | A vs B |
 | :--- | :---: | :---: | :---: | :---: |
-| Clean test | 0.8690 | 0.8631 | 0.8719 | +0.0059 |
-| Noisy test | 0.8388 | 0.8046 | 0.7193 | +0.0343 |
+| Clean test | 0.9159 | 0.9159 | 0.9191 | +0.0000 |
+| Noisy test | 0.9170 | 0.8692 | 0.8627 | +0.0477 |
 
 **Finding:** Under auxiliary-sensor noise, Model A (DAE) outperforms Model B, empirically supporting the denoising block and resolving the clean-test AE paradox under deployment-time corruption.
 
@@ -22,13 +23,13 @@ Models are trained on **clean** windows. Models **with DAE** (A, C) additionally
 ```
 Model      Model A (Full 5-Block: DAE+CNN+BiLSTM+Residual+Attn)  Model B (No DAE - BiLSTM+Residual+Attn)
 Noise_Std                                                                                               
-0.05                                                     0.8649                                   0.8515
-0.08                                                     0.8562                                   0.8365
-0.10                                                     0.8484                                   0.8224
-0.12                                                     0.8388                                   0.8046
-0.15                                                     0.8208                                   0.7690
-0.18                                                     0.7982                                   0.7217
-0.20                                                     0.7811                                   0.6830
+0.05                                                     0.9195                                   0.9049
+0.08                                                     0.9193                                   0.8921
+0.10                                                     0.9184                                   0.8814
+0.12                                                     0.9170                                   0.8692
+0.15                                                     0.9137                                   0.8485
+0.18                                                     0.9091                                   0.8253
+0.20                                                     0.9052                                   0.8088
 ```
 
 
