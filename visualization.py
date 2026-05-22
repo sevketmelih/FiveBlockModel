@@ -12,11 +12,19 @@ import os
 import re
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
+
+try:
+    import seaborn as sns
+
+    _HAS_SEABORN = True
+except ImportError:
+    sns = None
+    _HAS_SEABORN = False
 from matplotlib.figure import Figure
 from sklearn.metrics import r2_score
 
@@ -24,6 +32,9 @@ from sklearn.metrics import r2_score
 # Publication constants
 # ---------------------------------------------------------------------------
 PUBLICATION_DPI = 300
+TRAINING_HISTORIES_PATH = os.path.join("outputs", "ablation_training_histories.json")
+FIGURE_CATALOG_PATH = os.path.join("outputs", "figure_catalog.md")
+
 SAVE_KWARGS = {
     "dpi": PUBLICATION_DPI,
     "bbox_inches": "tight",
@@ -45,37 +56,138 @@ POOL_FACTOR = 2  # MaxPool1D(pool_size=2) after CNN
 
 def apply_publication_style() -> None:
     """Matplotlib + seaborn theme for academic figures."""
-    sns.set_theme(
-        style="whitegrid",
-        context="paper",
-        font_scale=1.15,
-        rc={
-            "figure.dpi": PUBLICATION_DPI,
-            "savefig.dpi": PUBLICATION_DPI,
-            "axes.labelsize": 14,
-            "axes.titlesize": 16,
-            "xtick.labelsize": 12,
-            "ytick.labelsize": 12,
-            "legend.fontsize": 11,
-            "figure.titlesize": 18,
-            "axes.linewidth": 1.0,
-            "grid.alpha": 0.35,
-        },
-    )
-    plt.rcParams.update(
-        {
-            "font.family": "sans-serif",
-            "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-        }
-    )
+    base_rc = {
+        "figure.dpi": PUBLICATION_DPI,
+        "savefig.dpi": PUBLICATION_DPI,
+        "axes.labelsize": 14,
+        "axes.titlesize": 16,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 11,
+        "figure.titlesize": 18,
+        "axes.linewidth": 1.0,
+        "grid.alpha": 0.35,
+        "font.family": "sans-serif",
+        "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+    if _HAS_SEABORN:
+        sns.set_theme(
+            style="whitegrid",
+            context="paper",
+            font_scale=1.15,
+            rc=base_rc,
+        )
+    plt.rcParams.update(base_rc)
 
 
 def save_figure(fig: Figure, path: str) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fig.savefig(path, **SAVE_KWARGS)
     plt.close(fig)
+
+
+def save_training_histories(
+    histories: Dict[str, dict],
+    path: str = TRAINING_HISTORIES_PATH,
+) -> None:
+    """Persist validation loss curves for offline figure regeneration."""
+    serializable = {}
+    for name, hist in histories.items():
+        serializable[name] = {
+            k: [float(x) for x in list(v)]
+            for k, v in hist.items()
+            if isinstance(v, (list, tuple)) or hasattr(v, "__len__")
+        }
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(serializable, f, indent=2)
+    print(f"[VISUALIZATION] Saved training histories: {path}")
+
+
+def load_training_histories(
+    path: str = TRAINING_HISTORIES_PATH,
+) -> Dict[str, dict]:
+    """Load histories saved by `main.py` (empty dict if missing)."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_figure_catalog(
+    metrics_clean: List[dict],
+    metrics_noisy: List[dict],
+    path: str = FIGURE_CATALOG_PATH,
+) -> None:
+    """Index of all Task 4 figures for report embedding (Student 210911028)."""
+    figures = [
+        ("ablation_loss_curves.png", "Validation loss per ablation model (requires training histories JSON)"),
+        ("ablation_tables.md", "Markdown Tables 1–4 (clean / noisy / robustness / DAE)"),
+        ("ablation_clean_vs_noisy_r2.png", "Grouped bar: R² clean vs. noisy"),
+        ("prediction_scatter_plot.png", "Model A — actual vs. predicted scatter (primary)"),
+        ("prediction_scatter_all_models.png", "2×2 scatter grid for Models A–D"),
+        ("prediction_timeseries_72h.png", "72-hour forecast vs. ground truth"),
+        ("attention_weights_map.png", "Self-attention heatmap (sample × lag)"),
+        ("attention_hour_of_day.png", "Mean attention by clock hour (rush bands)"),
+        ("attention_rush_hour_comparison.png", "Rush vs. off-peak attention"),
+        ("noise_sweep_a_vs_b.png", "R² vs. noise σ (Model A vs. B)"),
+        ("dae_clean_vs_noisy_forecast.png", "Model A/B forecast under clean/noisy inputs"),
+        ("optimization_history.png", "Optuna trial history (Task 3, 300 DPI)"),
+        ("param_importances.png", "Optuna Fanova importances (Task 3, 300 DPI)"),
+    ]
+    lines = [
+        "# Figure Catalog — Task 4 (Student 210911028)",
+        "",
+        "All raster figures export at **300 DPI** (`PUBLICATION_DPI` in `visualization.py`).",
+        "",
+        "| File | Status | Description |",
+        "| :--- | :---: | :--- |",
+    ]
+    for fname, desc in figures:
+        exists = os.path.exists(os.path.join("outputs", fname))
+        flag = "✓" if exists else "missing"
+        lines.append(f"| `{fname}` | {flag} | {desc} |")
+
+    lines.extend(
+        [
+            "",
+            "## Key metrics (latest CSV run)",
+            "",
+            "| Model | R² Clean | R² Noisy |",
+            "| :--- | :---: | :---: |",
+        ]
+    )
+    df_c = pd.DataFrame(metrics_clean)
+    df_n = pd.DataFrame(metrics_noisy)
+    for _, rc in df_c.iterrows():
+        model = _short_model_name(rc["Scenario"])
+        rn = df_n[df_n["Scenario"] == rc["Scenario"]]
+        r2n = rn["R2 Score"].iloc[0] if not rn.empty else float("nan")
+        lines.append(
+            f"| **{model}** | {rc['R2 Score']:.4f} | {r2n:.4f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Reproduction",
+            "",
+            "```bash",
+            "pip install -r requirements.txt",
+            "python main.py                    # full pipeline + all figures",
+            "python regenerate_all_figures.py  # from checkpoints (no retrain)",
+            "python generate_visualizations.py # tables + CSV plots only",
+            "```",
+            "",
+            "*Generated by Task 4 visualization pipeline (Student 210911028).*",
+        ]
+    )
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"[VISUALIZATION] Saved figure catalog: {path}")
 
 
 def _short_model_name(scenario: str) -> str:
@@ -427,15 +539,22 @@ def plot_attention_sample_heatmap(
     cmap = LinearSegmentedColormap.from_list(
         "pub_magma", ["#f0f4f8", "#bc5090", "#003f5c", "#1a0000"]
     )
-    sns.heatmap(
-        data,
-        ax=ax,
-        cmap=cmap,
-        cbar_kws={"label": "Attention weight α"},
-        xticklabels=lag_labels,
-        yticklabels=5,
-        linewidths=0,
-    )
+    if _HAS_SEABORN:
+        sns.heatmap(
+            data,
+            ax=ax,
+            cmap=cmap,
+            cbar_kws={"label": "Attention weight α"},
+            xticklabels=lag_labels,
+            yticklabels=5,
+            linewidths=0,
+        )
+    else:
+        im = ax.imshow(data, aspect="auto", cmap=cmap, origin="lower")
+        fig.colorbar(im, ax=ax, label="Attention weight α")
+        ax.set_xticks(range(n_steps))
+        ax.set_xticklabels(lag_labels, rotation=45, ha="right")
+        ax.set_yticks(range(0, data.shape[0], max(1, data.shape[0] // 10)))
     ax.set_title(
         "Self-Attention Weights — Model A (First 50 Test Samples)",
         pad=14,
@@ -669,9 +788,17 @@ def generate_all_publication_figures(
     os.makedirs("outputs", exist_ok=True)
 
     write_ablation_markdown_tables(metrics_clean, metrics_noisy)
+    write_figure_catalog(metrics_clean, metrics_noisy)
 
+    if not histories:
+        histories = load_training_histories()
     if histories:
         plot_validation_loss_curves(histories)
+    else:
+        print(
+            "[VISUALIZATION] Skipped ablation_loss_curves.png "
+            "(no histories; run `python main.py` to generate)."
+        )
     plot_prediction_timeseries(y_true_clean, test_predictions_clean)
     plot_scatter_grid_all_models(y_true_clean, test_predictions_clean)
 
@@ -731,14 +858,129 @@ def regenerate_tables_from_csv(
     return write_ablation_markdown_tables(df_c.to_dict("records"), df_n.to_dict("records"))
 
 
-def regenerate_static_plots_from_csv() -> None:
-    """Bar and noise-sweep plots from saved CSVs (no model weights required)."""
+def plot_optimization_history_from_csv(
+    csv_path: str = "outputs/hyperparameter_search_results.csv",
+    out_path: str = "outputs/optimization_history.png",
+) -> None:
+    """Rebuild Optuna optimization history from saved trial CSV (Task 3 alignment)."""
+    if not os.path.exists(csv_path):
+        return
     apply_publication_style()
+    df = pd.read_csv(csv_path)
+    complete = df[df["state"] == "COMPLETE"].sort_values("number")
+    if complete.empty:
+        return
+    values = complete["value"].astype(float).tolist()
+    best_vals = [min(values[: i + 1]) for i in range(len(values))]
+    trial_nums = list(range(len(values)))
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.scatter(trial_nums, values, color="#bc5090", s=50, zorder=3, label="Trial val_loss", alpha=0.85)
+    ax.plot(trial_nums, best_vals, color="#003f5c", linewidth=2.5, label="Best val_loss so far")
+    ax.set_title("Optuna: Optimization History (Validation Loss)", pad=14)
+    ax.set_xlabel("Trial index")
+    ax.set_ylabel("Validation loss (MSE)")
+    ax.legend(frameon=True)
+    fig.tight_layout()
+    save_figure(fig, out_path)
+    print(f"[VISUALIZATION] Saved: {out_path}")
+
+
+def plot_param_importances_from_csv(
+    csv_path: str = "outputs/hyperparameter_search_results.csv",
+    out_path: str = "outputs/param_importances.png",
+    seed: int = 42,
+) -> None:
+    """Fanova parameter importances from saved Optuna CSV (rebuilds in-memory study)."""
+    if not os.path.exists(csv_path):
+        return
+    try:
+        import optuna
+        from optuna.distributions import CategoricalDistribution
+    except ImportError:
+        print("[VISUALIZATION] Optuna not installed — skipped param_importances.")
+        return
+
+    df = pd.read_csv(csv_path)
+    complete = df[df["state"] == "COMPLETE"]
+    if len(complete) < 4:
+        print("[VISUALIZATION] Too few trials — skipped param_importances.")
+        return
+
+    distributions = {
+        "learning_rate": CategoricalDistribution([1e-2, 1e-3, 1e-4]),
+        "dropout_rate": CategoricalDistribution([0.2, 0.3, 0.5]),
+        "bilstm_units": CategoricalDistribution([32, 64, 128]),
+    }
+    study = optuna.create_study(direction="minimize")
+    for _, row in complete.iterrows():
+        study.add_trial(
+            optuna.trial.create_trial(
+                params={
+                    "learning_rate": float(row["params_learning_rate"]),
+                    "dropout_rate": float(row["params_dropout_rate"]),
+                    "bilstm_units": int(row["params_bilstm_units"]),
+                },
+                distributions=distributions,
+                value=float(row["value"]),
+                state=optuna.trial.TrialState.COMPLETE,
+            )
+        )
+
+    apply_publication_style()
+    try:
+        evaluator = optuna.importance.FanovaImportanceEvaluator(seed=seed)
+        importances = optuna.importance.get_param_importances(study, evaluator=evaluator)
+    except Exception as exc:
+        print(f"[VISUALIZATION] Parameter importance failed: {exc}")
+        return
+
+    params = list(importances.keys())
+    scores = list(importances.values())
+    colors = ["#003f5c", "#bc5090", "#ffa600"][: len(params)]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.barh(params, scores, color=colors, edgecolor="white", height=0.5)
+    for bar, score in zip(bars, scores):
+        ax.text(
+            bar.get_width() + 0.005,
+            bar.get_y() + bar.get_height() / 2,
+            f"{score:.3f}",
+            va="center",
+            fontsize=11,
+        )
+    ax.set_title("Optuna: Hyperparameter Importance (Fanova)", pad=14)
+    ax.set_xlabel("Importance score")
+    ax.set_xlim(0, max(scores) * 1.25)
+    fig.tight_layout()
+    save_figure(fig, out_path)
+    print(f"[VISUALIZATION] Saved: {out_path}")
+
+
+def regenerate_optuna_plots_from_csv() -> None:
+    """Regenerate Task 3 Optuna figures at 300 DPI from hyperparameter_search_results.csv."""
+    plot_optimization_history_from_csv()
+    plot_param_importances_from_csv()
+
+
+def regenerate_static_plots_from_csv() -> None:
+    """Bar, loss-curve, Optuna, and noise-sweep plots from saved CSV/JSON (no model weights)."""
+    apply_publication_style()
+    os.makedirs("outputs", exist_ok=True)
     df_c = pd.read_csv("outputs/ablation_metrics_clean.csv")
     df_n = pd.read_csv("outputs/ablation_metrics_noisy.csv")
     plot_clean_vs_noisy_metrics_bar(df_c, df_n)
     sweep_path = "outputs/noise_sweep_a_vs_b.csv"
     if os.path.exists(sweep_path):
         plot_noise_sweep(pd.read_csv(sweep_path))
+    histories = load_training_histories()
+    if histories:
+        plot_validation_loss_curves(histories)
+    else:
+        print(
+            "[VISUALIZATION] ablation_loss_curves.png skipped "
+            "(no outputs/ablation_training_histories.json — run python main.py)."
+        )
+    regenerate_optuna_plots_from_csv()
     regenerate_tables_from_csv()
+    write_figure_catalog(df_c.to_dict("records"), df_n.to_dict("records"))
     print("[VISUALIZATION] Static plots/tables regenerated from CSV.")

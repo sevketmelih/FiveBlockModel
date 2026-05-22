@@ -1,0 +1,11 @@
+{
+  "learning_rate": 0.01,
+  "dropout_rate": 0.5,
+  "bilstm_units": 64,
+  "val_loss": 0.0089767901226878,
+  "trial_number": 11,
+  "source": "optuna_csv_export",
+  "n_trials": 15,
+  "reconstruction_loss_weight": 0.05,
+  "train_dae_noise_std": 0.04
+}

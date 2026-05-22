@@ -24,6 +24,7 @@ DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/00501/PRSA
 DATA_ZIP_PATH = "PRSA2017_Data_20130301-20170228.zip"
 DATA_EXTRACT_DIR = "PRSA_Data"
 
+import json
 import os
 import urllib.request
 import zipfile
@@ -52,10 +53,42 @@ TRAIN_DAE_NOISE_STD = 0.04
 RECONSTRUCTION_LOSS_WEIGHT = 0.05
 NOISE_SWEEP_LEVELS = (0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20)
 
+# Optuna-tuned training defaults (hyperparameter_tuning.py — Task 3; overridden by JSON if present)
+DEFAULT_LEARNING_RATE = 1e-2
+DEFAULT_DROPOUT_RATE = 0.5
+DEFAULT_BILSTM_UNITS = 64
+BEST_HYPERPARAMETERS_PATH = os.path.join("outputs", "best_hyperparameters.json")
+
+
+def load_production_hyperparameters():
+    """
+    Load final training hyperparameters for ablation (Task 3 Optuna export preferred).
+    Falls back to module defaults when `outputs/best_hyperparameters.json` is missing.
+    """
+    if os.path.exists(BEST_HYPERPARAMETERS_PATH):
+        with open(BEST_HYPERPARAMETERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "learning_rate": float(data["learning_rate"]),
+            "dropout_rate": float(data["dropout_rate"]),
+            "bilstm_units": int(data["bilstm_units"]),
+            "source": data.get("source", "optuna"),
+            "trial_number": data.get("trial_number"),
+            "val_loss": data.get("val_loss"),
+        }
+    return {
+        "learning_rate": DEFAULT_LEARNING_RATE,
+        "dropout_rate": DEFAULT_DROPOUT_RATE,
+        "bilstm_units": DEFAULT_BILSTM_UNITS,
+        "source": "module_defaults",
+        "trial_number": None,
+        "val_loss": None,
+    }
+
 # Ensure outputs folder exists
 os.makedirs("outputs", exist_ok=True)
 
-from visualization import generate_all_publication_figures
+from visualization import generate_all_publication_figures, save_training_histories
 
 # ==========================================
 # SECTION 1: DATA ACQUISITION & PREPROCESSING
@@ -246,10 +279,10 @@ def build_hybrid_model(
     use_residual=True,
     use_attention=True,
     latent_dim=16,
-    bilstm_units=64,
+    bilstm_units=DEFAULT_BILSTM_UNITS,
     cnn_filters=64,
-    dropout_1=0.3,
-    dropout_2=0.2,
+    dropout_1=DEFAULT_DROPOUT_RATE,
+    dropout_2=DEFAULT_DROPOUT_RATE,
     l2_reg=1e-4,
 ):
     """
@@ -333,7 +366,7 @@ def build_hybrid_model(
 # SECTION 4: TRAINING & EVALUATION HELPERS
 # ==========================================
 
-def _compile_model(model, use_ae, learning_rate=1e-3, reconstruction_weight=RECONSTRUCTION_LOSS_WEIGHT):
+def _compile_model(model, use_ae, learning_rate=DEFAULT_LEARNING_RATE, reconstruction_weight=RECONSTRUCTION_LOSS_WEIGHT):
     if use_ae:
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
@@ -383,12 +416,13 @@ def train_ablation_model(
     epochs=20,
     batch_size=128,
     apply_dae_training_noise=False,
+    learning_rate=DEFAULT_LEARNING_RATE,
 ):
     """
     Train on clean windows by default. When use_ae and apply_dae_training_noise,
     feed noisy auxiliary inputs while reconstructing clean sequences (denoising AE).
     """
-    _compile_model(model, use_ae)
+    _compile_model(model, use_ae, learning_rate=learning_rate)
 
     if use_ae and apply_dae_training_noise:
         X_train_in = inject_gaussian_sensor_noise(
@@ -469,6 +503,7 @@ def write_dae_robustness_report(metrics_clean, metrics_noisy, sweep_df):
         f"- Test noise std (auxiliary channels only): `{DEFAULT_SENSOR_NOISE_STD}`",
         f"- Training DAE noise std: `{TRAIN_DAE_NOISE_STD}`",
         f"- Reconstruction loss weight (beta): `{RECONSTRUCTION_LOSS_WEIGHT}`",
+        f"- Training hyperparameters: see `outputs/best_hyperparameters.json` or module defaults",
         f"- Random seed: `{RANDOM_SEED}`",
         "",
         "## R² Summary",
@@ -517,6 +552,16 @@ def write_dae_robustness_report(metrics_clean, metrics_noisy, sweep_df):
 
 def run_ablation_studies():
     set_global_seeds(RANDOM_SEED)
+    hparams = load_production_hyperparameters()
+    lr = hparams["learning_rate"]
+    dropout = hparams["dropout_rate"]
+    bilstm_units = hparams["bilstm_units"]
+    print(
+        f"[HPO] Production hyperparameters ({hparams['source']}): "
+        f"lr={lr}, dropout={dropout}, bilstm_units={bilstm_units}"
+    )
+    if hparams.get("trial_number") is not None:
+        print(f"[HPO] Optuna best trial #{hparams['trial_number']}, val_loss={hparams.get('val_loss')}\n")
 
     train_scaled, val_scaled, test_scaled, scaler, feature_names, test_target_hours = (
         download_and_preprocess_data()
@@ -581,6 +626,9 @@ def run_ablation_studies():
             use_ae=config["use_ae"],
             use_attention=config["use_attention"],
             use_residual=config.get("use_residual", True),
+            bilstm_units=bilstm_units,
+            dropout_1=dropout,
+            dropout_2=dropout,
         )
         model.summary()
 
@@ -593,6 +641,7 @@ def run_ablation_studies():
             y_val,
             config["filepath"],
             apply_dae_training_noise=config["use_ae"],
+            learning_rate=lr,
         )
         histories[name] = history.history
         trained_models[name] = (name, model, config["use_ae"])
@@ -649,6 +698,7 @@ def run_ablation_studies():
     print(f"[REPORT] DAE noise study: outputs/dae_noise_robustness_report.md")
     
     # Task 4 — publication-grade figures (300 DPI) and Markdown tables
+    save_training_histories(histories)
     key_a = next(k for k in test_predictions_clean if k.startswith("Model A"))
     key_b = next(k for k in test_predictions_clean if k.startswith("Model B"))
     _, _, y_pred_a_noisy = evaluate_forecast(

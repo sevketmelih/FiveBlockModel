@@ -3,6 +3,7 @@
 Regenerate full Task 4 figure set from saved checkpoints (no retraining).
 
 Requires: outputs/best_model_*.keras from a prior `python main.py` run.
+Optional: outputs/ablation_training_histories.json for loss curves.
 """
 
 import os
@@ -19,10 +20,15 @@ from main import (
     download_and_preprocess_data,
     evaluate_forecast,
     inject_gaussian_sensor_noise,
+    load_production_hyperparameters,
     set_global_seeds,
     DEFAULT_SENSOR_NOISE_STD,
 )
-from visualization import generate_all_publication_figures, regenerate_static_plots_from_csv
+from visualization import (
+    generate_all_publication_figures,
+    load_training_histories,
+    regenerate_static_plots_from_csv,
+)
 
 SCENARIOS = {
     "Model A (Full 5-Block: DAE+CNN+BiLSTM+Residual+Attn)": {
@@ -48,13 +54,17 @@ SCENARIOS = {
 }
 
 
-def _load_model(name: str, config: dict, input_shape):
+def _load_model(name: str, config: dict, input_shape, bilstm_units: int, dropout: float):
     if not os.path.exists(config["filepath"]):
         raise FileNotFoundError(f"Missing checkpoint: {config['filepath']}")
     model = build_hybrid_model(
         input_shape=input_shape,
         use_ae=config["use_ae"],
         use_attention=config["use_attention"],
+        use_residual=True,
+        bilstm_units=bilstm_units,
+        dropout_1=dropout,
+        dropout_2=dropout,
     )
     model.load_weights(config["filepath"])
     return model
@@ -62,6 +72,14 @@ def _load_model(name: str, config: dict, input_shape):
 
 def main():
     set_global_seeds(42)
+    hparams = load_production_hyperparameters()
+    bilstm_units = hparams["bilstm_units"]
+    dropout = hparams["dropout_rate"]
+    print(
+        f"[REGEN] Hyperparameters ({hparams['source']}): "
+        f"bilstm={bilstm_units}, dropout={dropout}"
+    )
+
     train_scaled, val_scaled, test_scaled, scaler, _, test_target_hours = (
         download_and_preprocess_data()
     )
@@ -76,7 +94,7 @@ def main():
 
     for name, config in SCENARIOS.items():
         print(f"[LOAD] {name}")
-        model = _load_model(name, config, input_shape)
+        model = _load_model(name, config, input_shape, bilstm_units, dropout)
         clean_m, y_true_clean, y_pred = evaluate_forecast(
             model, X_test, y_test, test_scaled, scaler, config["use_ae"]
         )
@@ -105,7 +123,7 @@ def main():
     key_a = next(k for k in test_predictions_clean if k.startswith("Model A"))
     key_b = next(k for k in test_predictions_clean if k.startswith("Model B"))
     _, _, y_pred_a_noisy = evaluate_forecast(
-        _load_model(key_a, SCENARIOS[key_a], input_shape),
+        _load_model(key_a, SCENARIOS[key_a], input_shape, bilstm_units, dropout),
         X_test_noisy,
         y_test,
         test_scaled,
@@ -113,7 +131,7 @@ def main():
         True,
     )
     _, _, y_pred_b_noisy = evaluate_forecast(
-        _load_model(key_b, SCENARIOS[key_b], input_shape),
+        _load_model(key_b, SCENARIOS[key_b], input_shape, bilstm_units, dropout),
         X_test_noisy,
         y_test,
         test_scaled,
@@ -121,8 +139,9 @@ def main():
         False,
     )
 
+    histories = load_training_histories()
     generate_all_publication_figures(
-        histories={},
+        histories=histories,
         y_true_clean=y_true_clean,
         test_predictions_clean=test_predictions_clean,
         metrics_clean=metrics_clean,
